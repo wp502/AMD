@@ -15,7 +15,7 @@ from distillers.dsmd import KDModel, AdaptiveLossWeighting, compute_dsmd_loss
 from distillers.g2d import compute_g2d_loss
 from distillers.dclip import compute_dclip_loss
 from distillers.kdmcse import MCSE, compute_kdmcse_loss
-from distillers.hrad_20251129 import compute_hrad_loss
+from distillers.amd import compute_amd_loss
 
 from evaluation import evaluate_classification, evaluate_retrieval
 
@@ -75,7 +75,7 @@ def train_model(args, train_loader, val_loader, num_category,
     best_eval_result = {}
 
     # =========== 配置TS模型 ===========
-    need_teacher = args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'hrad'}
+    need_teacher = args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}
     if need_teacher:
         if teacher_model_1 is None or teacher_model_2 is None:
             raise RuntimeError(f"distiller={args.distiller} 需要 teacher_model_1/2，但收到 None。")
@@ -155,7 +155,7 @@ def train_model(args, train_loader, val_loader, num_category,
                 text_tokens_s = tokenizer_s(text_raw).cuda()
 
             # =========== 教师前向（仅在需要老师的蒸馏器时） ===========
-            if args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'hrad'}:
+            if args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}:
                 tokenizer_t = tokenize
                 text_tokens_t = tokenizer_t(text_raw).cuda()
                 with torch.no_grad():
@@ -232,8 +232,8 @@ def train_model(args, train_loader, val_loader, num_category,
                     loss_distill = compute_g2d_loss(outputs_t1, outputs_t2, outputs_s, config=args)
                 elif args.distiller == 'dclip':
                     loss_distill = compute_dclip_loss(outputs_t1, outputs_t2, outputs_s, device='cpu', config=args)
-                elif args.distiller == 'hrad':
-                    loss_distill = compute_hrad_loss(
+                elif args.distiller == 'amd':
+                    loss_distill = compute_amd_loss(
                         outputs_t1,
                         outputs_t2,
                         outputs_s,
@@ -258,8 +258,8 @@ def train_model(args, train_loader, val_loader, num_category,
                     loss_distill = compute_g2d_loss(outputs_t1, outputs_t2, outputs_s, config=args)
                 elif args.distiller == 'dclip':
                     loss_distill = compute_dclip_loss(outputs_t1, outputs_t2, outputs_s, device='cpu', config=args)
-                elif args.distiller == 'hrad':
-                    loss_distill = compute_hrad_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), device=images.device.type, config=args)
+                elif args.distiller == 'amd':
+                    loss_distill = compute_amd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), device=images.device.type, config=args)
                 else:
                     loss_distill = .0
 
