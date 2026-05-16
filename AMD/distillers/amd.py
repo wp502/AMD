@@ -122,7 +122,7 @@ def _modality_weights(
             candidates.append(n)
 
     if len(candidates) == 0:
-        raise RuntimeError("No valid modality branch is available for HRAD.")
+        raise RuntimeError("No valid modality branch is available for AMD.")
 
     diffs = []
 
@@ -276,7 +276,7 @@ def cosine_distillation_loss_per_sample(
     return 1.0 - (s * t).sum(dim=1)
 
 
-def compute_hrad_loss(
+def compute_amd_loss(
     outputs_t1: Dict[str, torch.Tensor],
     outputs_t2: Dict[str, torch.Tensor],
     outputs_s: Dict[str, torch.Tensor],
