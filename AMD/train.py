@@ -15,7 +15,7 @@ from distillers.dsmd import KDModel, AdaptiveLossWeighting, compute_dsmd_loss
 from distillers.g2d import compute_g2d_loss
 from distillers.dclip import compute_dclip_loss
 from distillers.kdmcse import MCSE, compute_kdmcse_loss
-from distillers.amd import compute_amd_loss
+from distillers.hrad_20251129 import compute_hrad_loss
 
 from evaluation import evaluate_classification, evaluate_retrieval
 
@@ -29,14 +29,14 @@ class RandomDecayLRScheduler:
         for group in self.optimizer.param_groups:
             lr = group["lr"]
 
-           
+            # 基础衰减
             lr = lr * self.decay_rate
 
-            
+            # 随机扰动 ±5%
             noise = (2 * torch.rand(1).item() - 1) * self.max_noise_pct
             lr = lr * (1 + noise)
 
-            
+            # 安全性：限制不超过初始 lr（可选）
             if "initial_lr" in group:
                 lr = min(lr, group["initial_lr"])
 
@@ -63,19 +63,19 @@ def train_model(args, train_loader, val_loader, num_category,
         root = getattr(args, "save_dir_teachers", "raw_models/teachers")
         return os.path.join(root, distiller_tag, dataset_slug)
 
-   
+    # ================= 标签信息（用于组合文件名） =================
     s_tag = _slug(getattr(args, "student_model", "student"))
     t1_tag = _slug(getattr(args, "teacher_model_1", "teacher1"))
     t2_tag = _slug(getattr(args, "teacher_model_2", "teacher2"))
     distiller_tag = _slug(getattr(args, "distiller", "none"))
 
-    
+    # =========== 初始化最优性能 ===========
     best_score = .0
     best_epoch = 0
     best_eval_result = {}
 
-  
-    need_teacher = args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}
+    # =========== 配置TS模型 ===========
+    need_teacher = args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'hrad'}
     if need_teacher:
         if teacher_model_1 is None or teacher_model_2 is None:
             raise RuntimeError(f"distiller={args.distiller} 需要 teacher_model_1/2，但收到 None。")
@@ -85,14 +85,14 @@ def train_model(args, train_loader, val_loader, num_category,
     student_model.cuda()
     student_model.train()
 
-    
+    # =========== 配置蒸馏器 ===========
     if args.distiller == 'dsmd':
         dsmd_kdmodel = KDModel(args)
         dsmd_adapter = AdaptiveLossWeighting(4)
     if args.distiller == 'kdmcse':
         kdmcse_kdmodel = MCSE()
 
-    
+    # =========== 配置优化器 ===========
     optimizer = torch.optim.Adam(student_model.parameters(), lr=args.learning_rate)
     total_epochs = args.epoch
     warmup_epochs = max(1, int(0.1 * total_epochs))  # 前 10% epoch 做 warmup
@@ -106,7 +106,7 @@ def train_model(args, train_loader, val_loader, num_category,
 
     scheduler = LambdaLR(optimizer, lr_lambda)
     
-  
+    # ===== 初始检索评估（只在检索任务）=====
     if not num_category:
         _init_eval = evaluate_retrieval(student_model, val_loader)
         _i2t = _init_eval.get("I2T", {})
@@ -117,22 +117,22 @@ def train_model(args, train_loader, val_loader, num_category,
             f"T2I R@1: {float(_t2i.get('R@1',0.0)):.4f} | R@5: {float(_t2i.get('R@5',0.0)):.4f} | R@10: {float(_t2i.get('R@10',0.0)):.4f} || "
             f"Mean R@1: {float(_mean.get('R@1',0.0)):.4f} | R@5: {float(_mean.get('R@5',0.0)):.4f} | R@10: {float(_mean.get('R@10',0.0)):.4f}"
         )
-
-   
+    # =========== Epoch 循环 ===========
     for epoch in range(total_epochs):
         print(f"[LR] Epoch {epoch+1} start | lr={optimizer.param_groups[0]['lr']:.2e}")
 
         student_model.train()
         total_loss = .0
         batch_count = 0
-
+        # =========== Batch 循环 ===========
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}")):
 
-            
+            # =========== 读取 Batch 数据 ===========
             images = batch["image"].cuda()     # [B, C, H, W]
             text_raw = batch["text"]           # list[str]
 
-           
+            # =========== Tokenize 文本数据 ===========
+            # 学生模型 Tokenize 文本
             if hasattr(student_model, "get_tokenizer"):
                 tokenizer_s = student_model.get_tokenizer()
                 use_bert_tokenizer = True
@@ -141,7 +141,7 @@ def train_model(args, train_loader, val_loader, num_category,
                 use_bert_tokenizer = False
 
             if use_bert_tokenizer:
-                
+                # 重要：ALBEF 需要 input_ids & attention_mask；这里显式放到 cuda
                 text_tokens_s = tokenizer_s(text_raw, padding=True, truncation=True, return_tensors="pt")
                 if isinstance(text_tokens_s, dict):
                     for k in text_tokens_s:
@@ -154,8 +154,8 @@ def train_model(args, train_loader, val_loader, num_category,
             else:
                 text_tokens_s = tokenizer_s(text_raw).cuda()
 
-            
-            if args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}:
+            # =========== 教师前向（仅在需要老师的蒸馏器时） ===========
+            if args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'hrad'}:
                 tokenizer_t = tokenize
                 text_tokens_t = tokenizer_t(text_raw).cuda()
                 with torch.no_grad():
@@ -164,33 +164,33 @@ def train_model(args, train_loader, val_loader, num_category,
             else:
                 outputs_t1 = outputs_t2 = None
 
-           
+            # =========== 学生模型前向 ===========
             outputs_s = student_model(images, text_tokens_s)
 
-          
+            # =========== 学生模型基础损失 ===========
             if num_category:
-                
+                # 学生模型基础损失（分类）
                 labels = batch["label"].cuda()    # [B]
                 loss_cls_joint = F.binary_cross_entropy_with_logits(outputs_s["joint_logits"], labels)
                 loss_cls_img = F.binary_cross_entropy_with_logits(outputs_s["image_logits"], labels)
                 loss_cls_txt = F.binary_cross_entropy_with_logits(outputs_s["text_logits"], labels)
             else:
-                
+                # 学生模型基础损失（检索）
                 img_feat_s = F.normalize(outputs_s["image_feat"], dim=-1)
                 txt_feat_s = F.normalize(outputs_s["text_feat"], dim=-1)
 
-                
+                # 1) 取出/创建可学习的 logit_scale（log 温度），默认对齐 CLIP 的 1/0.07
                 if "logit_scale" in outputs_s:
                     logit_scale = outputs_s["logit_scale"].exp()
                 elif hasattr(student_model, "logit_scale"):
                     logit_scale = student_model.logit_scale.exp()
                 else:
-                    
+                    # 学生模型没有就注册一个
                     if not hasattr(student_model, "_logit_scale"):
                         student_model._logit_scale = torch.nn.Parameter(
                             torch.ones([], device=img_feat_s.device) * math.log(1/0.07)
                         )
-                    
+                    # 把它加入优化器（仅当还未加入）
                     def _param_in_optimizer(opt, p):
                         pid = id(p)
                         for g in opt.param_groups:
@@ -203,11 +203,11 @@ def train_model(args, train_loader, val_loader, num_category,
                             optimizer.add_param_group({"params": [student_model._logit_scale]})
                     logit_scale = student_model._logit_scale.exp()
 
-            
+                # 2) 计算对比学习 logits（带温度）
                 logits_per_image = logit_scale * (img_feat_s @ txt_feat_s.T)
                 logits_per_text = logits_per_image.T
 
-                
+                # 可选：每步之后在 0~log(100) 内夹紧（对齐 OpenAI CLIP 做法，防止爆炸）
                 with torch.no_grad():
                     if hasattr(student_model, "logit_scale"):
                         student_model.logit_scale.clamp_((0), math.log(100))
@@ -218,7 +218,7 @@ def train_model(args, train_loader, val_loader, num_category,
                 loss_i2t = F.cross_entropy(logits_per_image, labels_contrastive)
                 loss_t2i = F.cross_entropy(logits_per_text, labels_contrastive)
 
-          
+            # =========== 多模态蒸馏损失（分类） ===========
             if num_category:
                 if args.distiller == 'none':
                     loss_distill = .0
@@ -232,12 +232,19 @@ def train_model(args, train_loader, val_loader, num_category,
                     loss_distill = compute_g2d_loss(outputs_t1, outputs_t2, outputs_s, config=args)
                 elif args.distiller == 'dclip':
                     loss_distill = compute_dclip_loss(outputs_t1, outputs_t2, outputs_s, device='cpu', config=args)
-                elif args.distiller == 'amd':
-                    loss_distill = compute_amd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), device=images.device.type, config=args)
+                elif args.distiller == 'hrad':
+                    loss_distill = compute_hrad_loss(
+                        outputs_t1,
+                        outputs_t2,
+                        outputs_s,
+                        batch.get("label", None),
+                        device=images.device.type,
+                        config=args,
+                    )
                 else:
                     raise ValueError(f"Unknown distiller: {args.distiller}")
 
-       
+            # =========== 多模态蒸馏损失（检索） ===========
             else:
                 if args.distiller == 'none':
                     loss_distill = .0
@@ -251,30 +258,30 @@ def train_model(args, train_loader, val_loader, num_category,
                     loss_distill = compute_g2d_loss(outputs_t1, outputs_t2, outputs_s, config=args)
                 elif args.distiller == 'dclip':
                     loss_distill = compute_dclip_loss(outputs_t1, outputs_t2, outputs_s, device='cpu', config=args)
-                elif args.distiller == 'amd':
-                    loss_distill = compute_amd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), device=images.device.type, config=args)
+                elif args.distiller == 'hrad':
+                    loss_distill = compute_hrad_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), device=images.device.type, config=args)
                 else:
                     loss_distill = .0
 
+            # =========== 总损失计算 ===========
             if num_category:
-               
+                # 总损失计算（分类）
                 loss = loss_cls_joint + loss_distill
             else:
-                
+                # 总损失计算（检索）
                 loss = loss_i2t + loss_t2i + loss_distill
 
-           
+            # =========== 反向传播 ===========
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
             batch_count += 1
 
-        
+        # =========== Epoch损失计算显示 ===========
         avg_loss = total_loss / max(1, batch_count)
         print(f"[Train] Epoch {epoch} | Loss: {avg_loss:.4f}")
-
-      
+        # 识别是否 VQAv2
         ds_name = str(getattr(args, "dataset", "") or getattr(getattr(val_loader, "dataset", None), "name", "")).lower()
 
         if num_category:
@@ -303,7 +310,7 @@ def train_model(args, train_loader, val_loader, num_category,
             )
             metric_for_stop = float(_mean.get("R@1", 0.0))
 
-     
+        # 保存最优
         better = metric_for_stop > best_score
         if better:
             best_score = metric_for_stop
@@ -357,6 +364,7 @@ def train_model(args, train_loader, val_loader, num_category,
         scheduler.step()
         student_model.train()
 
+    # ---------------- 最终总结 ----------------
     print("============================================================")
     if num_category:
         ds_name = str(getattr(args, "dataset", "") or getattr(getattr(val_loader, "dataset", None), "name", "")).lower()
@@ -381,4 +389,5 @@ def train_model(args, train_loader, val_loader, num_category,
             f"Mean R@1: {float(__mean.get('R@1',0.0)):.4f} | R@5: {float(__mean.get('R@5',0.0)):.4f} | R@10: {float(__mean.get('R@10',0.0)):.4f}"
         )
     print("============================================================")
+    
     return student_model
