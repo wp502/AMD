@@ -90,7 +90,7 @@ def train_model(args, train_loader, val_loader, num_category,
         dsmd_kdmodel = KDModel(args)
         dsmd_adapter = AdaptiveLossWeighting(4)
     if args.distiller == 'kdmcse':
-        kdmcse_kdmodel = MCSE()
+        kdmcse_kdmodel = MCSE().cuda()
 
     # =========== 配置优化器 ===========
     optimizer = torch.optim.Adam(student_model.parameters(), lr=args.learning_rate)
