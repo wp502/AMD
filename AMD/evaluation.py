@@ -381,30 +381,30 @@ def evaluate_retrieval(
         hits = (topk_rows == cap_gt_rows.unsqueeze(0)).any(dim=0).float()
         return float(hits.mean().item()) if cap_feats.size(0) > 0 else 0.0
 
-    #i2t_r1,  i2t_r5,  i2t_r10   = recall_i2t_at_k(1),  recall_i2t_at_k(5),  recall_i2t_at_k(10)
-    #t2i_r1,  t2i_r5,  t2i_r10  = recall_t2i_at_k(1),  recall_t2i_at_k(5),  recall_t2i_at_k(10)
-    #mean_r1, mean_r5, mean_r10 = (i2t_r1+t2i_r1)/2, (i2t_r5+t2i_r5)/2, (i2t_r10+t2i_r10)/2
-    i2t_r1,  i2t_r5,  i2t_r10,  i2t_r50,  i2t_r100   = recall_i2t_at_k(1),  recall_i2t_at_k(5),  recall_i2t_at_k(10),  recall_i2t_at_k(50),  recall_i2t_at_k(100)
-    t2i_r1,  t2i_r5,  t2i_r10,  t2i_r50,  t2i_r100  = recall_t2i_at_k(1),  recall_t2i_at_k(5),  recall_t2i_at_k(10),  recall_i2t_at_k(50),  recall_i2t_at_k(100)
-    mean_r1, mean_r5, mean_r10, mean_r50, mean_r100 = (i2t_r1+t2i_r1)/2, (i2t_r5+t2i_r5)/2, (i2t_r10+t2i_r10)/2, (i2t_r50+t2i_r50)/2, (i2t_r100+t2i_r100)/2
+    i2t_r1,  i2t_r5,  i2t_r10   = recall_i2t_at_k(1),  recall_i2t_at_k(5),  recall_i2t_at_k(10)
+    t2i_r1,  t2i_r5,  t2i_r10  = recall_t2i_at_k(1),  recall_t2i_at_k(5),  recall_t2i_at_k(10)
+    mean_r1, mean_r5, mean_r10 = (i2t_r1+t2i_r1)/2, (i2t_r5+t2i_r5)/2, (i2t_r10+t2i_r10)/2
+    #i2t_r1,  i2t_r5,  i2t_r10,  i2t_r50,  i2t_r100   = recall_i2t_at_k(1),  recall_i2t_at_k(5),  recall_i2t_at_k(10),  recall_i2t_at_k(50),  recall_i2t_at_k(100)
+    #t2i_r1,  t2i_r5,  t2i_r10,  t2i_r50,  t2i_r100  = recall_t2i_at_k(1),  recall_t2i_at_k(5),  recall_t2i_at_k(10),  recall_t2i_at_k(50),  recall_t2i_at_k(100)
+    #mean_r1, mean_r5, mean_r10, mean_r50, mean_r100 = (i2t_r1+t2i_r1)/2, (i2t_r5+t2i_r5)/2, (i2t_r10+t2i_r10)/2, (i2t_r50+t2i_r50)/2, (i2t_r100+t2i_r100)/2
 
     
 
-    return {
-        "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10, "R@50": i2t_r50, "R@100": i2t_r100},
-        "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10, "R@50": t2i_r5, "R@100": t2i_r100},
-        "Mean": {"R@1": mean_r1, "R@5": mean_r5, "R@10": mean_r10, "R@50": mean_r50, "R@100": mean_r100},
-        "num_images": int(img_feats.size(0)),
-        "num_captions": int(cap_feats.size(0)),
-        "tta": image_tta,
-        "templates": (template_list if template_list else ["{}"]),
-    }
     #return {
-    #    "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10},
-    #    "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10},
-    #    "Mean": {"R@1": mean_r1, "R@5": mean_r5, "R@10": mean_r10},
+    #    "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10, "R@50": i2t_r50, "R@100": i2t_r100},
+    #    "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10, "R@50": t2i_r50, "R@100": t2i_r100},
+    #    "Mean": {"R@1": mean_r1, "R@5": mean_r5, "R@10": mean_r10, "R@50": mean_r50, "R@100": mean_r100},
     #    "num_images": int(img_feats.size(0)),
     #    "num_captions": int(cap_feats.size(0)),
     #    "tta": image_tta,
     #    "templates": (template_list if template_list else ["{}"]),
     #}
+    return {
+        "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10},
+        "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10},
+        "Mean": {"R@1": mean_r1, "R@5": mean_r5, "R@10": mean_r10},
+        "num_images": int(img_feats.size(0)),
+        "num_captions": int(cap_feats.size(0)),
+        "tta": image_tta,
+        "templates": (template_list if template_list else ["{}"]),
+    }
