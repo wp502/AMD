@@ -52,9 +52,9 @@ def load_dataset(dataset, batch_size=32, val_split=0.1, test_split=0.1, image_si
 
     elif dataset == 'flickr-30k':
         
-        train_set = Flickr30kRetrievalDataset(split="train", image_size=image_size)
-        val_set   = Flickr30kRetrievalDataset(split="val",   image_size=image_size)
-        test_set  = Flickr30kRetrievalDataset(split="test",  image_size=image_size)
+        train_set = Flickr30kRetrievalDataset(split="train", image_size=image_size, mode="train", one_caption_per_image=True,)
+        val_set   = Flickr30kRetrievalDataset(split="val",   image_size=image_size, mode="eval", one_caption_per_image=False,)
+        test_set  = Flickr30kRetrievalDataset(split="test",  image_size=image_size, mode="eval", one_caption_per_image=False,)
         number_category = None  
 
         train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
