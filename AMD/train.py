@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import math
 
 
-from distillers.msd import compute_msd_loss
+from distillers.lmd import compute_lmd_loss
 from distillers.dsmd import KDModel, AdaptiveLossWeighting, compute_dsmd_loss
 from distillers.g2d import compute_g2d_loss
 from distillers.dclip import compute_dclip_loss
@@ -69,7 +69,7 @@ def train_model(args, train_loader, val_loader, num_category,
     best_epoch = 0
     best_eval_result = {}
 
-    need_teacher = args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}
+    need_teacher = args.distiller in {'lmd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}
     if need_teacher:
         if teacher_model_1 is None or teacher_model_2 is None:
             raise RuntimeError(f"distiller={args.distiller} 需要 teacher_model_1/2，但收到 None。")
@@ -139,7 +139,7 @@ def train_model(args, train_loader, val_loader, num_category,
             else:
                 text_tokens_s = tokenizer_s(text_raw).cuda()
 
-            if args.distiller in {'msd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}:
+            if args.distiller in {'lmd', 'dsmd', 'kdmcse', 'g2d', 'dclip', 'amd'}:
                 tokenizer_t = tokenize
                 text_tokens_t = tokenizer_t(text_raw).cuda()
                 with torch.no_grad():
@@ -196,8 +196,8 @@ def train_model(args, train_loader, val_loader, num_category,
             if num_category:
                 if args.distiller == 'none':
                     loss_distill = .0
-                elif args.distiller == 'msd':
-                    loss_distill = compute_msd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), "classification")
+                elif args.distiller == 'lmd':
+                    loss_distill = compute_lmd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), "classification")
                 elif args.distiller == 'dsmd':
                     loss_distill = compute_dsmd_loss(dsmd_kdmodel, dsmd_adapter, outputs_t1, outputs_t2, outputs_s)
                 elif args.distiller == 'kdmcse':
@@ -221,8 +221,8 @@ def train_model(args, train_loader, val_loader, num_category,
             else:
                 if args.distiller == 'none':
                     loss_distill = .0
-                elif args.distiller == 'msd':
-                    loss_distill = compute_msd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), "retrieval")
+                elif args.distiller == 'lmd':
+                    loss_distill = compute_lmd_loss(outputs_t1, outputs_t2, outputs_s, batch.get("label", None), "retrieval")
                 elif args.distiller == 'dsmd':
                     loss_distill = compute_dsmd_loss(dsmd_kdmodel, dsmd_adapter, outputs_t1, outputs_t2, outputs_s)
                 elif args.distiller == 'kdmcse':
