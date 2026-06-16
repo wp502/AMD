@@ -70,7 +70,7 @@ class Flickr30kRetrievalDataset(Dataset):
             self.transform = transform
         else:
             if mode == "train":
-                
+                # CLIP-like train pipeline: random resized crop + small jitter (可按需去掉 jitter)
                 self.transform = transforms.Compose([
                     transforms.RandomResizedCrop(
                         image_size,
