@@ -1,21 +1,14 @@
-# evaluation.py
-# -*- coding: utf-8 -*-
+
 import torch
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import f1_score
 
-
 try:
     from open_clip import tokenize as _oc_tokenize
 except Exception:
     _oc_tokenize = None
-
-
-# ---------------------------
-# Helpers
-# ---------------------------
 
 def _unwrap_model(model):
     """Handle DataParallel/DistributedDataParallel."""
@@ -35,15 +28,9 @@ def _get_device(model):
 
 def _maybe_get_tokenizer(model):
     return model.get_tokenizer() if hasattr(model, "get_tokenizer") and model.get_tokenizer() is not None else None
-
-
-# ---------------------------
-# Classification helpers
-# ---------------------------
-
 @torch.no_grad()
 def _forward_logits(model, batch, device, prefer="auto", fuse_alpha=None):
-    
+
     images = batch["image"].to(device, non_blocking=True)
     text_raw = batch.get("text", None)
 
@@ -70,7 +57,6 @@ def _forward_logits(model, batch, device, prefer="auto", fuse_alpha=None):
     if prefer == "image" and has_img:
         return outputs["image_logits"]
 
-    # auto / fallback
     if has_joint:
         return outputs["joint_logits"]
     if has_text and has_img:
@@ -95,7 +81,6 @@ def _collect_logits_labels(model, loader, device, prefer="auto", fuse_alpha=None
 
 
 def _fit_temperature_lbfgs(logits, labels, init_T=1.0, max_iter=50):
-    
     T = torch.tensor([init_T], device=logits.device, requires_grad=True)
     bce = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.LBFGS([T], lr=0.1, max_iter=max_iter, line_search_fn="strong_wolfe")
@@ -111,7 +96,6 @@ def _fit_temperature_lbfgs(logits, labels, init_T=1.0, max_iter=50):
 
 
 def _per_class_thresholds(probs, labels, grid=None):
-   
     if grid is None:
         grid = np.linspace(0.05, 0.95, 19, dtype=np.float32)
     probs_np = probs.detach().cpu().numpy()
@@ -139,11 +123,6 @@ def _apply_thresholds(probs, thresholds):
         thr = thresholds.to(probs.device)
     return (probs >= thr.view(1, -1)).int()
 
-
-# ---------------------------
-# Classification Evaluation
-# ---------------------------
-
 @torch.no_grad()
 def evaluate_classification(
     model,
@@ -152,15 +131,13 @@ def evaluate_classification(
     thresholds: np.ndarray = None,      
     topk: int = 1,
     prefer: str = "auto",              
-    fuse_alpha: float = None,           
+    fuse_alpha: float = None,         
     calibrated: bool = True,           
-    return_calib: bool = True,         
+    return_calib: bool = True,       
 ):
-    
     model.eval()
     device = _get_device(model)
 
-    # ---------- VQAv2：soft Accuracy ----------
     if dataset is not None and dataset.lower() == "vqav2":
         total = 0
         acc_sum = 0.0
@@ -203,7 +180,6 @@ def evaluate_classification(
             total += images.size(0)
         return {"vqa_acc": acc_sum / max(total, 1)}
 
-   
     logits, labels = _collect_logits_labels(model, val_loader, device, prefer=prefer, fuse_alpha=fuse_alpha)
 
     T = 1.0
@@ -240,45 +216,38 @@ def evaluate_classification(
     return result
 
 
-# ---------------------------
-# Retrieval Evaluation (with optional TTA & prompt ensembling)
-# ---------------------------
-
 @torch.no_grad()
 def evaluate_retrieval(
     model,
     val_loader,
-    image_tta: str = "none",            # 'none' | 'hflip' | 'shift' | 'hflip+shift'
-    text_templates: list = None,        # e.g. ["{}", "a photo of {}"]
-    max_text_templates: int = 4,        
+    image_tta: str = "none",          
+    text_templates: list = None,      
+    max_text_templates: int = 4,       
 ):
     model.eval()
     device = _get_device(model)
     tokenizer = _maybe_get_tokenizer(model)
 
-    # --------- 图像 TTA 视角 ---------
     def _image_views(x, mode: str):
         # x: [B, 3, H, W] on device
         views = [x]
         if mode in ("hflip", "hflip+shift"):
-            views.append(torch.flip(x, dims=[3]))  # 水平翻转
+            views.append(torch.flip(x, dims=[3]))
         if mode in ("shift", "hflip+shift"):
             pad = 4
             xpad = F.pad(x, pad=(pad, pad, pad, pad), mode="replicate")
             H, W = x.shape[-2:]
             shifts = [
-                xpad[:, :, 0:H, pad:pad+W],             # up
-                xpad[:, :, 2*pad:2*pad+H, pad:pad+W],   # down
-                xpad[:, :, pad:pad+H, 0:W],             # left
-                xpad[:, :, pad:pad+H, 2*pad:2*pad+W],   # right
+                xpad[:, :, 0:H, pad:pad+W],            
+                xpad[:, :, 2*pad:2*pad+H, pad:pad+W],   
+                xpad[:, :, pad:pad+H, 0:W],            
+                xpad[:, :, pad:pad+H, 2*pad:2*pad+W],  
             ]
             xshift = torch.stack(shifts, dim=0).mean(0)
             views.append(xshift)
         return views
 
-    
     def _encode_text_ensemble(texts: list, template_list: list):
-       
         if not template_list or len(template_list) == 0:
             if tokenizer is not None:
                 text_tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(device)
@@ -306,7 +275,6 @@ def evaluate_retrieval(
         txt_feat = F.normalize(txt_feat, dim=-1)
         return txt_feat
 
-    # 默认模板
     default_templates = ["{}", "a photo of {}"]
     template_list = text_templates if text_templates is not None else default_templates
     if template_list is not None and len(template_list) == 1 and template_list[0] == "{}":
@@ -322,11 +290,10 @@ def evaluate_retrieval(
 
         txt_feat = _encode_text_ensemble(texts, template_list)  # [B_cap, D] (CPU)
 
-        
+        # 图像（TTA）
         views = _image_views(images, image_tta) if image_tta != "none" else [images]
         img_feats_each_view = []
         for v in views:
-           
             if tokenizer is not None:
                 text_tokens = tokenizer([""], padding=True, truncation=True, return_tensors="pt").to(device)
             else:
@@ -388,17 +355,6 @@ def evaluate_retrieval(
     #t2i_r1,  t2i_r5,  t2i_r10,  t2i_r50,  t2i_r100  = recall_t2i_at_k(1),  recall_t2i_at_k(5),  recall_t2i_at_k(10),  recall_t2i_at_k(50),  recall_t2i_at_k(100)
     #mean_r1, mean_r5, mean_r10, mean_r50, mean_r100 = (i2t_r1+t2i_r1)/2, (i2t_r5+t2i_r5)/2, (i2t_r10+t2i_r10)/2, (i2t_r50+t2i_r50)/2, (i2t_r100+t2i_r100)/2
 
-    
-
-    #return {
-    #    "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10, "R@50": i2t_r50, "R@100": i2t_r100},
-    #    "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10, "R@50": t2i_r50, "R@100": t2i_r100},
-    #    "Mean": {"R@1": mean_r1, "R@5": mean_r5, "R@10": mean_r10, "R@50": mean_r50, "R@100": mean_r100},
-    #    "num_images": int(img_feats.size(0)),
-    #    "num_captions": int(cap_feats.size(0)),
-    #    "tta": image_tta,
-    #    "templates": (template_list if template_list else ["{}"]),
-    #}
     return {
         "I2T": {"R@1": i2t_r1, "R@5": i2t_r5, "R@10": i2t_r10},
         "T2I": {"R@1": t2i_r1, "R@5": t2i_r5, "R@10": t2i_r10},
