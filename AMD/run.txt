@@ -123,13 +123,13 @@ python main.py --dataset mmimdb --teacher_model_1 clip-ViT-B-16 --teacher_model_
 ms-coco：
 python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model clip-ViT-B-32 --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128 --gpu 2 
 python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model resnet-bert --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128 --gpu 1
-python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-RN101  --student_model resnet-bert --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 256 --gpu 4
+python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-RN101  --student_model resnet-bert --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128--gpu 4
 python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model clip-RN50 --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128 --gpu 3
 python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model vit-bert --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128 --gpu 0
 python main.py --dataset ms-coco --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-RN101  --student_model clip-RN50 --distiller amd --epoch 40 --learning_rate 1e-5 --batch_size 128 --gpu 5
 
 flickr-30k：
-python main.py --dataset flickr-30k --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model clip-ViT-B-32 --distiller amd --epoch 40 --learning_rate 5e-5 --gpu 0 --project_dim 64
+python main.py --dataset flickr-30k --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model clip-ViT-B-32 --distiller amd --epoch 40 --learning_rate 5e-5 --gpu 0
 python main.py --dataset flickr-30k --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model clip-RN50 --distiller amd --epoch 40 --learning_rate 5e-5 --gpu 1
 python main.py --dataset flickr-30k --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model vit-bert --distiller amd --epoch 40 --learning_rate 5e-5 --gpu 2
 python main.py --dataset flickr-30k --teacher_model_1 clip-ViT-B-16 --teacher_model_2  clip-ViT-L-14  --student_model  resnet-bert --distiller amd  --epoch 40 --learning_rate 5e-5 --gpu 3
