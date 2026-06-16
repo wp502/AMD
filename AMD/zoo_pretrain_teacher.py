@@ -35,7 +35,6 @@ def soft_cross_entropy(logits, soft_targets):
 
 
 class AsymmetricLoss(nn.Module):
-  
     def __init__(self, gamma_pos=1.0, gamma_neg=4.0, clip=0.05, eps=1e-8,
                  disable_torch_grad_focal_loss=True):
         super().__init__()
@@ -73,7 +72,6 @@ class AsymmetricLoss(nn.Module):
 
 
 class ModelEMA:
-   
     def __init__(self, model: nn.Module, decay: float = 0.9995):
         self.ema = copy.deepcopy(model).eval()
         for p in self.ema.parameters():
@@ -90,7 +88,6 @@ class ModelEMA:
 
 
 def cosine_warmup(step: int, total_steps: int, warmup_steps: int) -> float:
-   
     if step < warmup_steps:
         return (step + 1) / max(1, warmup_steps)
     progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
@@ -106,10 +103,7 @@ def autocast_ctx(device: torch.device):
         yield
 
 
-# ===================== Retrieval printing helper =====================
-
 def _fmt_recall_dict(d: Dict[str, Any], ks=(1, 5, 10, 50, 100)) -> str:
- 
     return " | ".join([f"R@{k}: {float(d.get(f'R@{k}', 0.0)):.4f}" for k in ks])
 
 
@@ -122,9 +116,6 @@ def _fmt_recall_triplet(eval_result: Dict[str, Any], ks=(1, 5, 10, 50, 100)) -> 
         f"T2I {_fmt_recall_dict(t2i, ks)} || "
         f"Mean {_fmt_recall_dict(mean, ks)}"
     )
-
-
-
 
 @torch.no_grad()
 def collect_logits_labels(model: nn.Module, loader, device, fuse_alpha: float = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -225,17 +216,13 @@ def per_class_threshold_search(probs: torch.Tensor, labels: torch.Tensor) -> tor
     return thresholds
 
 
-
 def train_teacher_model(args, train_loader, val_loader, test_loader, num_category, model, log_path, save_path):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-
-  
     for m in model.modules():
         if isinstance(m, (torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
             m.eval()
-
     base_lr = args.learning_rate
     head_lr_mult = args.head_lr_mult
     wd = 0.01
@@ -272,7 +259,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
         optimizer, lr_lambda=lambda step: cosine_warmup(step, total_steps, warmup_steps)
     )
 
-  
     use_cuda = (device.type == 'cuda')
     scaler = torch.cuda.amp.GradScaler(
         enabled=use_cuda,
@@ -281,16 +267,14 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
     )
     ema = ModelEMA(model, decay=args.ema_decay) if args.use_ema else None
 
-  
+    # ====== Loss（分类） ======
     if args.loss_type == "asl":
         loss_fn = AsymmetricLoss(gamma_pos=args.asl_gamma_pos, gamma_neg=args.asl_gamma_neg, clip=args.asl_clip)
     else:
         loss_fn = nn.BCEWithLogitsLoss()
-
-    
     if hasattr(model, "logit_scale"):
         with torch.no_grad():
-            model.logit_scale.fill_(math.log(1/0.07))  # CLIP 默认温度
+            model.logit_scale.fill_(math.log(1/0.07))
 
     best_score = -1e9
     best_epoch = 0
@@ -318,14 +302,12 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
                 outputs = model(images, text_tokens)
 
                 if num_category:
-                  
                     if args.dataset.lower() == "vqav2":
                         # VQA: soft CE
                         soft = batch.get("soft_label", batch["label"].float()).to(device, non_blocking=True)
                         logits = outputs.get("joint_logits", outputs["image_logits"])
                         loss = soft_cross_entropy(logits, soft)
                     else:
-                       
                         labels = batch["label"].float().to(device, non_blocking=True)
 
                         if args.use_logit_adjust and hasattr(train_loader.dataset, "class_priors"):
@@ -340,7 +322,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
 
                         w_joint, w_img, w_txt = args.w_joint, args.w_img, args.w_txt
 
-                       
                         with torch.cuda.amp.autocast(enabled=False):
                             labels_f32 = labels.float()
                             loss = 0.0
@@ -351,11 +332,9 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
                             if text_logits is not None:
                                 loss = loss + w_txt   * loss_fn(text_logits.float() - adjust, labels_f32)
                 else:
-                    
                     img_feat = F.normalize(outputs["image_feat"], dim=-1)
                     txt_feat = F.normalize(outputs["text_feat"], dim=-1)
 
-                   
                     scale_i2t = (1.0 / args.contrastive_tau_i2t)
                     scale_t2i = (1.0 / args.contrastive_tau_t2i)
 
@@ -388,7 +367,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
                     alpha = args.contrastive_alpha_t2i
                     loss = (loss_i2t + alpha * loss_t2i) / (1.0 + alpha)
 
-           
             loss = loss / max(1, args.accumulate_steps)
             if not torch.isfinite(loss):
                 log_print(f"[Warn] skip batch due to non-finite loss: {loss.item()}", log_path)
@@ -408,7 +386,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
 
                 scheduler.step()  
 
-                
                 if hasattr(model, "logit_scale"):
                     with torch.no_grad():
                         model.logit_scale.clamp_(min=math.log(1.0), max=math.log(1000.0))
@@ -425,14 +402,12 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
         model.eval()
         with torch.no_grad():
             if num_category:
-               
                 if args.dataset.lower() == "vqav2":
                     eval_result = evaluate_classification(model if ema is None else ema.ema,
                                                           val_loader, dataset=args.dataset)
                     vqa_acc = float(eval_result["vqa_acc"])
                     log_print(f"[Eval-VQA] Epoch {epoch} | Acc: {vqa_acc:.4f}", log_path)
                     current_score = vqa_acc
-                   
                 else:
                     eval_result = evaluate_classification(model if ema is None else ema.ema,
                                                           val_loader, dataset=args.dataset)
@@ -485,7 +460,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
                 mean = eval_result.get("Mean", {})
                 current_score = float(mean.get("R@1", 0.0))
 
-       
         if current_score > best_score:
             best_score = current_score
             best_epoch = epoch
@@ -520,7 +494,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
         log_print(_fmt_recall_triplet(best_eval_result, ks=(1, 5, 10, 50, 100)), log_path)
 
     log_print("=" * 60, log_path)
-
 
     if num_category and args.calibrated_test:
         try:
@@ -579,8 +552,6 @@ def train_teacher_model(args, train_loader, val_loader, test_loader, num_categor
     return None
 
 
-# ===================== Main =====================
-
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -605,7 +576,7 @@ def main():
     # training
     parser.add_argument('--epoch', type=int, default=16)
     parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--learning_rate', type=float, default=5e-5)  
+    parser.add_argument('--learning_rate', type=float, default=5e-5)   
     parser.add_argument('--warmup_ratio', type=float, default=0.10)
     parser.add_argument('--clip_grad_norm', type=float, default=1.0)
     parser.add_argument('--head_lr_mult', type=float, default=3.0)
@@ -648,28 +619,24 @@ def main():
     parser.add_argument('--use_logit_adjust', action='store_true')
     parser.add_argument('--logit_adjust_tau', type=float, default=1.0)
 
-  
     parser.add_argument('--contrastive_alpha_t2i', type=float, default=1.3, help='T2I loss weight')
     parser.add_argument('--contrastive_tau_i2t', type=float, default=0.07)
     parser.add_argument('--contrastive_tau_t2i', type=float, default=0.05)
 
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-
-
+    
     set_seed(args.seed)
 
-
+ 
     save_dir = 'raw_models/teachers/train_new'
     model_name = args.teacher_model.replace("/", "-")
     save_path = os.path.join(save_dir, f"{model_name}_{args.dataset}_{args.project_dim}.pth")
     log_path = os.path.join(save_dir, f"{model_name}_{args.dataset}_log_{args.project_dim}.txt")
 
- 
     train_loader, val_loader, test_loader, num_category = load_dataset(
         dataset=args.dataset, batch_size=args.batch_size
     )
-
 
     teacher_model = build_model(args.teacher_model, num_category, args.project_dim)
 
@@ -693,11 +660,11 @@ def main():
             log_path
         )
 
+  
     test_calib_result = train_teacher_model(
         args, train_loader, val_loader, test_loader, num_category, teacher_model, log_path, save_path
     )
 
-  
     base, ext = os.path.splitext(os.path.join('raw_models/teachers/train_R', f"{model_name}_{args.dataset}.pth"))
     metrics_path = base + "_metrics.json"
     try:
