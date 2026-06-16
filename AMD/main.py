@@ -47,7 +47,7 @@ parser.add_argument('--epoch', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--learning_rate', type=float, default=1e-4)
 #
-parser.add_argument('--distiller', type=str, default='amd', choices=['none', 'msd', 'albef', 'dsmd', 'kdmcse', 'dclip', 'g2d', 'amd'], help='name of the distiller')
+parser.add_argument('--distiller', type=str, default='amd', choices=['none', 'lmd', 'albef', 'dsmd', 'kdmcse', 'dclip', 'g2d', 'amd'], help='name of the distiller')
 # experiment detail
 parser.add_argument('--gpu', dest='gpu', type=str, default='2', choices=['0', '1', '2', '3','4', '5', '6', '7'])
 #
