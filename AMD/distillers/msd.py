@@ -4,20 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def compute_msd_loss(teacher_outputs_1, teacher_outputs_2, student_outputs, labels=None, task='retrieval', alpha=0.5, T=1.0):
-    """
-    计算多模态蒸馏损失（支持分类与检索任务，使用方案二：分别对每个教师计算 loss 后求平均）
+def compute_lmd_loss(teacher_outputs_1, teacher_outputs_2, student_outputs, labels=None, task='retrieval', alpha=0.5, T=1.0):
 
-    参数:
-        teacher_outputs_1, teacher_outputs_2: 两个教师模型的输出 (dict)
-        student_outputs: 学生模型输出 (dict)
-        labels: 分类任务标签 or None（检索任务不需要）
-        task: "classification" or "retrieval"
-        alpha: 平衡蒸馏loss与CE loss的权重
-        T: 蒸馏温度
-    返回:
-        distill_loss: 蒸馏损失（标量）
-    """
     loss_fn_kl = nn.KLDivLoss(reduction='batchmean')
 
     def kl_logits_loss(student_logit, teacher_logit):
@@ -34,7 +22,7 @@ def compute_msd_loss(teacher_outputs_1, teacher_outputs_2, student_outputs, labe
             loss_img = kl_logits_loss(student_outputs["image_logits"], teacher["image_logits"])
             loss_txt = kl_logits_loss(student_outputs["text_logits"], teacher["text_logits"])
             losses.append(0.5 * loss_joint + 0.25 * loss_img + 0.25 * loss_txt)
-        distill_loss = sum(losses) / len(losses)  # 平均两个教师的loss
+        distill_loss = sum(losses) / len(losses) 
 
     elif task == 'retrieval':
         losses = []
@@ -56,7 +44,7 @@ def compute_msd_loss(teacher_outputs_1, teacher_outputs_2, student_outputs, labe
             )
 
             losses.append(0.25 * loss_feat_img + 0.25 * loss_feat_txt + 0.5 * loss_logits)
-        distill_loss = sum(losses) / len(losses)  # 平均两个教师loss
+        distill_loss = sum(losses) / len(losses)  
 
     else:
         raise ValueError(f"Unknown task type: {task}")
