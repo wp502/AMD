@@ -16,7 +16,6 @@ def log_print(msg, log_file=None):
             f.write(msg + "\n")
 
 def log_retrieval(eval_result, prefix="", log_file=None):
-    
     if isinstance(eval_result, dict) and "I2T" in eval_result:
         i2t = eval_result["I2T"]; t2i = eval_result["T2I"]; mean = eval_result["Mean"]
         log_print(
@@ -34,7 +33,6 @@ def log_retrieval(eval_result, prefix="", log_file=None):
         if "tta" in eval_result or "templates" in eval_result:
             log_print(f"{prefix}TTA: {eval_result.get('tta', 'n/a')} | Templates: {eval_result.get('templates', 'n/a')}", log_file)
     else:
-       
         log_print(
             f"{prefix}I2T - R@1: {eval_result['R@1']:.4f} | R@5: {eval_result['R@5']:.4f} | R@10: {eval_result['R@10']:.4f}",
             log_file
@@ -44,12 +42,9 @@ def log_retrieval(eval_result, prefix="", log_file=None):
 def run_eval(args):
     os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
 
-    
     train_loader, val_loader, test_loader, num_category = load_dataset(
         dataset=args.dataset, batch_size=args.batch_size
     )
-
-    
     model = build_model(args.teacher_model, num_category, args.project_dim)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -76,8 +71,6 @@ def run_eval(args):
     log_print("=" * 60, args.log_path)
 
     results = {}
-
-   
     def _eval_split(split_name, loader):
         if loader is None:
             return None
@@ -90,7 +83,6 @@ def run_eval(args):
                 args.log_path
             )
         else:
-            
             try:
                 out = evaluate_retrieval(
                     model, loader,
@@ -99,19 +91,18 @@ def run_eval(args):
                     max_text_templates=args.max_text_templates
                 )
             except TypeError:
-               
                 log_print("[warn] evaluate_retrieval 不支持 image_tta/text_templates，已回退旧接口。", args.log_path)
                 out = evaluate_retrieval(model, loader)
             log_retrieval(out, prefix=f"[{split_name}] ", log_file=args.log_path)
         return out
 
-    
+    # 只评估用户选择的 split（或两者都评）
     if args.split in ("val", "both"):
         results["val"] = _eval_split("Val", val_loader)
     if args.split in ("test", "both"):
         results["test"] = _eval_split("Test", test_loader)
 
-   
+    # ====== 保存JSON ======
     with open(args.save_json, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     log_print("-" * 60, args.log_path)
@@ -126,11 +117,9 @@ if __name__ == "__main__":
                         choices=["clip-ViT-B-16", "clip-ViT-L-14", "clip-RN101"])
     parser.add_argument("--project_dim", type=int, default=512)
 
-
-    parser.add_argument("--batch_size", type=int, default=256)  # ✅ 默认 256
+    parser.add_argument("--batch_size", type=int, default=256)  
     parser.add_argument("--ckpt", type=str, required=True, help="path to .pth weights")
     parser.add_argument("--split", type=str, default="both", choices=["val", "test", "both"])
-
 
     parser.add_argument('--eval_tta', type=str, default="hflip",
                         choices=["none", "hflip", "shift", "hflip+shift"],
@@ -142,7 +131,6 @@ if __name__ == "__main__":
                         help='最多使用多少个模板，防止显存激增')
 
     args = parser.parse_args()
-
     save_dir = "raw_models/teachers/eval"
     os.makedirs(save_dir, exist_ok=True)
 
