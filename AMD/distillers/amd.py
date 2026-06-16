@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
@@ -98,7 +100,7 @@ def _proj_mse_per_sample(
     ).mean(dim=-1)
 
 
-def _modality_weights(
+def _classification_modality_weights(
     student_dict: Dict[str, torch.Tensor],
     targets: torch.Tensor,
     gamma: float,
@@ -117,7 +119,6 @@ def _modality_weights(
             and student_dict[f"{n}_logits"] is not None
             and student_dict[f"{n}_logits"].numel() > 1
         )
-
         if has_feat or has_logits:
             candidates.append(n)
 
@@ -125,33 +126,109 @@ def _modality_weights(
         raise RuntimeError("No valid modality branch is available for AMD.")
 
     diffs = []
-
     for n in candidates:
-        if targets is not None:
-            loss = _supervised_loss_per_sample(
-                student_dict[f"{n}_logits"],
-                targets,
-            )
-            diffs.append(loss.detach())  # [B]
-        else:
-            feat = F.normalize(student_dict[f"{n}_feat"].float(), dim=-1)
-            sim = torch.softmax(feat @ feat.T, dim=-1)
-            ent = -(sim * sim.clamp_min(1e-12).log()).sum(dim=-1)
-            diffs.append(ent.detach())  # [B]
+        loss = _supervised_loss_per_sample(
+            student_dict[f"{n}_logits"],
+            targets,
+        )
+        diffs.append(loss.detach())
 
-    D = torch.stack(diffs, dim=1)  # [B, num_branches]
+    D = torch.stack(diffs, dim=1)
+    mean_D = D.mean(dim=1, keepdim=True).clamp_min(1e-12)
+    raw = (D / mean_D).pow(gamma)
+
+    low, high = bounds
+    raw = raw.clamp(low, high)
+    raw = raw * (
+        len(candidates) / raw.sum(dim=1, keepdim=True).clamp_min(1e-12)
+    )
+
+    return {candidates[i]: raw[:, i] for i in range(len(candidates))}
+
+
+def _cross_modal_directional_entropies(
+    image_feat: torch.Tensor,
+    text_feat: torch.Tensor,
+    temperature: float,
+    normalize_entropy: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute sample-wise cross-modal entropy.
+
+    The diagonal is retained because it represents the matched image-text pair,
+    rather than trivial within-modality self-similarity.
+    """
+    if image_feat.dim() != 2 or text_feat.dim() != 2:
+        raise ValueError(
+            "Expected image/text features with shape [B, D], got "
+            f"{tuple(image_feat.shape)} and {tuple(text_feat.shape)}."
+        )
+    if image_feat.size(0) != text_feat.size(0):
+        raise ValueError("Image and text batches must have the same size.")
+    if image_feat.size(0) < 2:
+        raise ValueError("Cross-modal entropy requires batch size >= 2.")
+    if temperature <= 0:
+        raise ValueError("retrieval_proxy_temperature must be positive.")
+
+    image_feat = F.normalize(image_feat.float(), dim=-1)
+    text_feat = F.normalize(text_feat.float(), dim=-1)
+
+    logits_i2t = image_feat @ text_feat.t() / temperature
+    logits_t2i = logits_i2t.t()
+
+    log_p_i2t = F.log_softmax(logits_i2t, dim=1)
+    log_p_t2i = F.log_softmax(logits_t2i, dim=1)
+
+    p_i2t = log_p_i2t.exp()
+    p_t2i = log_p_t2i.exp()
+
+    entropy_i2t = -(p_i2t * log_p_i2t).sum(dim=1)
+    entropy_t2i = -(p_t2i * log_p_t2i).sum(dim=1)
+
+    if normalize_entropy:
+        denom = entropy_i2t.new_tensor(float(image_feat.size(0))).log()
+        entropy_i2t = entropy_i2t / denom.clamp_min(1e-12)
+        entropy_t2i = entropy_t2i / denom.clamp_min(1e-12)
+
+    return entropy_i2t, entropy_t2i
+
+
+def _retrieval_modality_weights(
+    student_dict: Dict[str, torch.Tensor],
+    gamma: float,
+    bounds: Tuple[float, float],
+    temperature: float,
+    normalize_entropy: bool,
+) -> Dict[str, torch.Tensor]:
+    """
+    Image branch uses I2T entropy; text branch uses T2I entropy.
+    Larger entropy indicates higher student learning demand.
+    """
+    entropy_i2t, entropy_t2i = _cross_modal_directional_entropies(
+        student_dict["image_feat"],
+        student_dict["text_feat"],
+        temperature,
+        normalize_entropy,
+    )
+
+    D = torch.stack(
+        [entropy_i2t.detach(), entropy_t2i.detach()],
+        dim=1,
+    )
 
     mean_D = D.mean(dim=1, keepdim=True).clamp_min(1e-12)
     raw = (D / mean_D).pow(gamma)
 
     low, high = bounds
     raw = raw.clamp(low, high)
-
     raw = raw * (
-        len(candidates) / raw.sum(dim=1, keepdim=True).clamp_min(1e-12)
+        2.0 / raw.sum(dim=1, keepdim=True).clamp_min(1e-12)
     )
 
-    return {candidates[i]: raw[:, i] for i in range(len(candidates))}
+    return {
+        "image": raw[:, 0],
+        "text": raw[:, 1],
+    }
 
 
 def _layer_weights(
@@ -197,27 +274,57 @@ def _layer_weights(
     return R_first / S, R_second / S
 
 
-def _teacher_weights(teacher_outputs_list, targets,):
+def _classification_teacher_weights(
+    teacher_outputs_list,
+    targets,
+):
     t1, t2 = teacher_outputs_list
 
-    if targets is not None:
-        loss1 = _supervised_loss_per_sample(t1, targets)
-        loss2 = _supervised_loss_per_sample(t2, targets)
+    loss1 = _supervised_loss_per_sample(t1, targets)
+    loss2 = _supervised_loss_per_sample(t2, targets)
+    proxy = torch.stack([loss1, loss2], dim=0)
 
-        proxy = torch.stack([loss1, loss2], dim=0)  # [2, B]
+    weights = torch.softmax(-proxy, dim=0)
+    return weights[0], weights[1]
+
+
+def _retrieval_teacher_weights(
+    teacher1_dict: Dict[str, torch.Tensor],
+    teacher2_dict: Dict[str, torch.Tensor],
+    branch: str,
+    temperature: float,
+    normalize_entropy: bool,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute branch-specific teacher credibility from cross-modal entropy.
+
+    Image branch uses I2T entropy; text branch uses T2I entropy.
+    Lower entropy indicates higher teacher credibility.
+    """
+    if branch not in ("image", "text"):
+        raise ValueError(
+            f"Retrieval teacher weighting supports image/text only, got {branch}."
+        )
+
+    t1_i2t, t1_t2i = _cross_modal_directional_entropies(
+        teacher1_dict["image_feat"],
+        teacher1_dict["text_feat"],
+        temperature,
+        normalize_entropy,
+    )
+    t2_i2t, t2_t2i = _cross_modal_directional_entropies(
+        teacher2_dict["image_feat"],
+        teacher2_dict["text_feat"],
+        temperature,
+        normalize_entropy,
+    )
+
+    if branch == "image":
+        proxy1, proxy2 = t1_i2t.detach(), t2_i2t.detach()
     else:
-        f1 = F.normalize(t1.float(), dim=-1)
-        f2 = F.normalize(t2.float(), dim=-1)
+        proxy1, proxy2 = t1_t2i.detach(), t2_t2i.detach()
 
-        sim1 = torch.softmax(f1 @ f1.T, dim=-1)
-        sim2 = torch.softmax(f2 @ f2.T, dim=-1)
-
-        ent1 = -(sim1 * sim1.clamp_min(1e-12).log()).sum(dim=-1)
-        ent2 = -(sim2 * sim2.clamp_min(1e-12).log()).sum(dim=-1)
-
-        proxy = torch.stack([ent1, ent2], dim=0)  # [2, B]
-
-    # Smaller proxy means more reliable teacher.
+    proxy = torch.stack([proxy1, proxy2], dim=0)
     weights = torch.softmax(-proxy, dim=0)
 
     return weights[0], weights[1]
@@ -280,16 +387,27 @@ def compute_amd_loss(
     outputs_t1: Dict[str, torch.Tensor],
     outputs_t2: Dict[str, torch.Tensor],
     outputs_s: Dict[str, torch.Tensor],
-    targets,
+    targets=None,
     device: str = "cpu",
     config: Any = None,
 ) -> torch.Tensor:
-    T = float(_cfg_get(config, "T", 4))
+    T = float(_cfg_get(config, "T", 2))
     ridge = float(_cfg_get(config, "ridge", 5e-4))
 
     w_cdist = float(_cfg_get(config, "cosine_loss_weight", 4.0))
     w_contrast = float(_cfg_get(config, "contrastive_loss_weight", 7.5))
     temperature = float(_cfg_get(config, "temperature", 0.06))
+    retrieval_proxy_temperature = float(
+        _cfg_get(config, "retrieval_proxy_temperature", temperature)
+    )
+    normalize_retrieval_entropy = bool(
+        _cfg_get(config, "normalize_retrieval_entropy", False)
+    )
+
+    # Backward compatibility with the original first file:
+    # targets may be passed explicitly, or stored in config.targets / config["targets"].
+    if targets is None:
+        targets = _cfg_get(config, "targets", None)
 
     targets = _to_device(targets, device) if targets is not None else None
 
@@ -305,7 +423,7 @@ def compute_amd_loss(
         modality_gamma = float(_cfg_get(config, "amb_gamma", 3.0))
         modality_bounds = _cfg_get(config, "amb_bounds", (0.5, 2.0))
 
-        w_adapt = _modality_weights(
+        w_adapt = _classification_modality_weights(
             s,
             targets,
             modality_gamma,
@@ -314,7 +432,10 @@ def compute_amd_loss(
 
         for br in ["joint", "image", "text"]:
             # Teacher-aware weights: w_{b,1}, w_{b,2}
-            w1, w2 = _teacher_weights([t1[f"{br}_logits"], t2[f"{br}_logits"],], targets,)  # [B], [B]
+            w1, w2 = _classification_teacher_weights(
+                [t1[f"{br}_logits"], t2[f"{br}_logits"]],
+                targets,
+            )  # [B], [B]
 
             # Logit-level losses: L^{logit}_{b,m}
             kd1 = _kl_per_sample(s[f"{br}_logits"], t1[f"{br}_logits"], T, )  # [B]
@@ -346,11 +467,23 @@ def compute_amd_loss(
         modality_gamma = float(_cfg_get(config, "amb_gamma", 3.0))
         modality_bounds = _cfg_get(config, "amb_bounds", (0.5, 2.0))
 
-        w_adapt = _modality_weights(s, targets, modality_gamma, modality_bounds,)
+        w_adapt = _retrieval_modality_weights(
+            s,
+            modality_gamma,
+            modality_bounds,
+            retrieval_proxy_temperature,
+            normalize_retrieval_entropy,
+        )
 
         for br in ["image", "text"]:
             # Teacher-aware weights based on feature uncertainty.
-            w1, w2 = _teacher_weights([t1[f"{br}_feat"], t2[f"{br}_feat"],], targets, )  # [B], [B]
+            w1, w2 = _retrieval_teacher_weights(
+                t1,
+                t2,
+                branch=br,
+                temperature=retrieval_proxy_temperature,
+                normalize_entropy=normalize_retrieval_entropy,
+            )  # [B], [B]
 
             # Alignment-level losses.
             align1 = cosine_distillation_loss_per_sample(s[f"{br}_feat"], t1[f"{br}_feat"], )  # [B]
