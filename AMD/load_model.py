@@ -1,45 +1,88 @@
-from models.clip import CLIPWrapper, CLIPMultiModalClassifier
-from models.resnet_bert import ResNetBertWrapper, ResNetBertMultiModalClassifier
-from models.vit_bert import ViTBertWrapper, ViTBertMultiModalClassifier
+import torch
+from torch.utils.data import random_split, DataLoader
 
 
-def parse_model_id(model_id: str):
-    """
-    解析组合字段：
-    - 'clip-ViT-B-32' → ('clip', 'ViT-B-32')
-    - 'clip-RN50' → ('clip', 'RN50')
-    - 'resnet-bert' → ('resnet+bert', None)
-    - 'vit-bert' → ('vit+bert', None)
-    """
-    if model_id.startswith('clip-'):
-        model_name = model_id[len('clip-'):]
-        return 'clip', model_name
+from datasets.mmimdb import MMIMDbCLIPDataset
+from datasets.vqav2 import VQAv2Dataset
+from datasets.flickr30k import Flickr30kRetrievalDataset
+from datasets.mscoco import COCORetrievalDataset
 
-    elif model_id == 'resnet-bert':
-        return 'resnet-bert', None
 
-    elif model_id == 'vit-bert':
-        return 'vit-bert', None
+def load_dataset(dataset, batch_size=32, val_split=0.1, test_split=0.1, image_size=224,
+                 num_workers=8, pin_memory=True):
+    
+    if dataset == 'mmimdb':
+        full_dataset = MMIMDbCLIPDataset(image_size=image_size)
+        total_len = len(full_dataset)
+        number_category = 23
+
+        # 随机划分
+        val_len = int(val_split * total_len)
+        test_len = int(test_split * total_len)
+        train_len = total_len - val_len - test_len
+        generator = torch.Generator().manual_seed(0)
+        train_set, val_set, test_set = random_split(full_dataset, [train_len, val_len, test_len], generator=generator)
+
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
+        val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+        test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+
+    elif dataset == 'vqav2':
+        full_dataset = VQAv2Dataset(image_size=image_size)
+        total_len = len(full_dataset)
+        number_category = 3129 
+
+        val_len = int(val_split * total_len)
+        test_len = int(test_split * total_len)
+        train_len = total_len - val_len - test_len
+        generator = torch.Generator().manual_seed(0)
+        train_set, val_set, test_set = random_split(full_dataset, [train_len, val_len, test_len], generator=generator)
+
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
+        val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+        test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+
+    elif dataset == 'flickr-30k':
+        train_set = Flickr30kRetrievalDataset(split="train", image_size=image_size, mode="train", one_caption_per_image=False,)
+        val_set   = Flickr30kRetrievalDataset(split="val",   image_size=image_size, mode="eval", one_caption_per_image=False,)
+        test_set  = Flickr30kRetrievalDataset(split="test",  image_size=image_size, mode="eval", one_caption_per_image=False,)
+        number_category = None  
+
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
+        val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+        test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+
+    elif dataset == 'ms-coco':
+        try:
+
+            train_set = COCORetrievalDataset(split={"train", "restval"}, image_size=image_size)
+        except Exception:
+            from torch.utils.data import ConcatDataset
+            train_set = ConcatDataset([
+                COCORetrievalDataset(split="train",   image_size=image_size),
+                COCORetrievalDataset(split="restval", image_size=image_size),
+            ])
+
+        val_set   = COCORetrievalDataset(split="val",  image_size=image_size)
+        test_set  = COCORetrievalDataset(split="test", image_size=image_size)
+        number_category = None  
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
+        val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
+        test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers, pin_memory=pin_memory, drop_last=False)
 
     else:
-        raise ValueError(f"Invalid model_id: {model_id}. Supported formats: 'clip-<model>', 'resnet-bert', 'vit-bert'")
+        raise ValueError(f"Unknown dataset: {dataset}")
 
-
-def build_model(model_id: str, num_category, project_dim):
-   
-    model_type, model_name = parse_model_id(model_id)
-
-    if model_type == "clip":
-        clip_model = CLIPWrapper(model_name=model_name, pretrained_source='openai', project_dim=project_dim)
-        return clip_model if num_category is None else CLIPMultiModalClassifier(clip_model, num_category)
-
-    elif model_type == "resnet-bert":
-        wrapper = ResNetBertWrapper(project_dim=project_dim)
-        return wrapper if num_category is None else ResNetBertMultiModalClassifier(wrapper, num_category)
-
-    elif model_type == "vit-bert":
-        wrapper = ViTBertWrapper(project_dim=project_dim)
-        return wrapper if num_category is None else ViTBertMultiModalClassifier(wrapper, num_category)
-
-    else:
-        raise ValueError(f"Unknown model_type: {model_type}")
+    return train_loader, val_loader, test_loader, number_category
